@@ -1,6 +1,5 @@
 """
-Coolify MCP Server
-Transport: SSE (configured via FASTMCP_HOST / FASTMCP_PORT env vars)
+Coolify MCP Server - Streamable HTTP transport for Claude Projects integration
 """
 import json
 import os
@@ -45,10 +44,6 @@ class AppUUID(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     uuid: str = Field(..., description="Application UUID (from coolify_list_applications)")
 
-class ServiceUUID(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    uuid: str = Field(..., description="Service UUID")
-
 class EnvVarInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     uuid: str = Field(..., description="Application UUID")
@@ -67,9 +62,9 @@ class LogsInput(BaseModel):
     uuid: str = Field(..., description="Application UUID")
     lines: int = Field(default=100, ge=1, le=1000)
 
-@mcp.tool(name="coolify_health", annotations={"readOnlyHint": True, "destructiveHint": False})
+@mcp.tool(name="coolify_health", annotations={"readOnlyHint": True})
 async def coolify_health() -> str:
-    """Check Coolify instance health and API connectivity. Use first to verify connection."""
+    """Check Coolify API connectivity and version."""
     try:
         async with _client() as c:
             r = await c.get("/version")
@@ -78,24 +73,23 @@ async def coolify_health() -> str:
     except Exception as e:
         return _err(e)
 
-@mcp.tool(name="coolify_list_applications", annotations={"readOnlyHint": True, "destructiveHint": False})
+@mcp.tool(name="coolify_list_applications", annotations={"readOnlyHint": True})
 async def coolify_list_applications() -> str:
-    """List all applications with UUIDs, status, domain and repo. Use this to find UUIDs."""
+    """List all applications with UUIDs, status, domain and repo."""
     try:
         async with _client() as c:
             r = await c.get("/applications")
             r.raise_for_status()
             apps = r.json()
-            summary = [{"uuid": a["uuid"], "name": a["name"], "status": a.get("status"),
-                       "fqdn": a.get("fqdn"), "repo": a.get("git_repository"),
-                       "restart_count": a.get("restart_count", 0)} for a in apps]
-            return _fmt(summary)
+            return _fmt([{"uuid": a["uuid"], "name": a["name"], "status": a.get("status"),
+                         "fqdn": a.get("fqdn"), "repo": a.get("git_repository"),
+                         "restart_count": a.get("restart_count", 0)} for a in apps])
     except Exception as e:
         return _err(e)
 
-@mcp.tool(name="coolify_get_application", annotations={"readOnlyHint": True, "destructiveHint": False})
+@mcp.tool(name="coolify_get_application", annotations={"readOnlyHint": True})
 async def coolify_get_application(params: AppUUID) -> str:
-    """Get full details of a specific application including env vars and build settings."""
+    """Get full details of a specific application."""
     try:
         async with _client() as c:
             r = await c.get(f"/applications/{params.uuid}")
@@ -104,9 +98,9 @@ async def coolify_get_application(params: AppUUID) -> str:
     except Exception as e:
         return _err(e)
 
-@mcp.tool(name="coolify_deploy", annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False})
+@mcp.tool(name="coolify_deploy", annotations={"readOnlyHint": False})
 async def coolify_deploy(params: DeployInput) -> str:
-    """Deploy or redeploy application. Triggers new build and deployment."""
+    """Deploy or redeploy an application. Triggers new build."""
     try:
         async with _client() as c:
             body = {}
@@ -119,9 +113,9 @@ async def coolify_deploy(params: DeployInput) -> str:
     except Exception as e:
         return _err(e)
 
-@mcp.tool(name="coolify_restart_application", annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True})
+@mcp.tool(name="coolify_restart_application", annotations={"readOnlyHint": False})
 async def coolify_restart_application(params: AppUUID) -> str:
-    """Restart application containers without rebuilding (fast restart)."""
+    """Restart application without rebuilding."""
     try:
         async with _client() as c:
             r = await c.get(f"/applications/{params.uuid}/restart")
@@ -130,7 +124,7 @@ async def coolify_restart_application(params: AppUUID) -> str:
     except Exception as e:
         return _err(e)
 
-@mcp.tool(name="coolify_stop_application", annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True})
+@mcp.tool(name="coolify_stop_application", annotations={"readOnlyHint": False, "destructiveHint": True})
 async def coolify_stop_application(params: AppUUID) -> str:
     """Stop a running application."""
     try:
@@ -141,7 +135,7 @@ async def coolify_stop_application(params: AppUUID) -> str:
     except Exception as e:
         return _err(e)
 
-@mcp.tool(name="coolify_start_application", annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True})
+@mcp.tool(name="coolify_start_application", annotations={"readOnlyHint": False})
 async def coolify_start_application(params: AppUUID) -> str:
     """Start a stopped application."""
     try:
@@ -152,9 +146,9 @@ async def coolify_start_application(params: AppUUID) -> str:
     except Exception as e:
         return _err(e)
 
-@mcp.tool(name="coolify_get_logs", annotations={"readOnlyHint": True, "destructiveHint": False})
+@mcp.tool(name="coolify_get_logs", annotations={"readOnlyHint": True})
 async def coolify_get_logs(params: LogsInput) -> str:
-    """Get container logs for debugging. Essential for diagnosing issues."""
+    """Get container logs for debugging."""
     try:
         async with _client() as c:
             r = await c.get(f"/applications/{params.uuid}/logs", params={"lines": params.lines})
@@ -166,9 +160,9 @@ async def coolify_get_logs(params: LogsInput) -> str:
     except Exception as e:
         return _err(e)
 
-@mcp.tool(name="coolify_get_deployment_logs", annotations={"readOnlyHint": True, "destructiveHint": False})
+@mcp.tool(name="coolify_get_deployment_logs", annotations={"readOnlyHint": True})
 async def coolify_get_deployment_logs(params: AppUUID) -> str:
-    """Get deployment logs for an application to diagnose build failures."""
+    """Get last deployment build logs - use to diagnose build failures."""
     try:
         async with _client() as c:
             r = await c.get(f"/applications/{params.uuid}/deployments", params={"per_page": 1})
@@ -180,16 +174,19 @@ async def coolify_get_deployment_logs(params: AppUUID) -> str:
             r2 = await c.get(f"/deployments/{dep_uuid}")
             r2.raise_for_status()
             d = r2.json()
+            status = d.get("status", "unknown")
             logs = d.get("logs", "")
             if isinstance(logs, list):
-                return "\n".join(l.get("output","") for l in logs[-50:])
-            return str(logs)[-5000:]
+                output = "\n".join(l.get("output", "") for l in logs[-60:])
+            else:
+                output = str(logs)[-6000:]
+            return f"Status: {status}\n\n{output}"
     except Exception as e:
         return _err(e)
 
-@mcp.tool(name="coolify_list_env_vars", annotations={"readOnlyHint": True, "destructiveHint": False})
+@mcp.tool(name="coolify_list_env_vars", annotations={"readOnlyHint": True})
 async def coolify_list_env_vars(params: AppUUID) -> str:
-    """List all environment variables for an application."""
+    """List environment variables for an application."""
     try:
         async with _client() as c:
             r = await c.get(f"/applications/{params.uuid}/envs")
@@ -198,9 +195,9 @@ async def coolify_list_env_vars(params: AppUUID) -> str:
     except Exception as e:
         return _err(e)
 
-@mcp.tool(name="coolify_set_env_var", annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True})
+@mcp.tool(name="coolify_set_env_var", annotations={"readOnlyHint": False})
 async def coolify_set_env_var(params: EnvVarInput) -> str:
-    """Set an environment variable. Remember to redeploy after to apply changes."""
+    """Set an environment variable. Redeploy after to apply."""
     try:
         async with _client() as c:
             body = {"key": params.key, "value": params.value, "is_preview": params.is_preview}
@@ -210,7 +207,7 @@ async def coolify_set_env_var(params: EnvVarInput) -> str:
     except Exception as e:
         return _err(e)
 
-@mcp.tool(name="coolify_list_services", annotations={"readOnlyHint": True, "destructiveHint": False})
+@mcp.tool(name="coolify_list_services", annotations={"readOnlyHint": True})
 async def coolify_list_services() -> str:
     """List all services (databases, Redis, etc)."""
     try:
@@ -221,9 +218,9 @@ async def coolify_list_services() -> str:
     except Exception as e:
         return _err(e)
 
-@mcp.tool(name="coolify_list_projects", annotations={"readOnlyHint": True, "destructiveHint": False})
+@mcp.tool(name="coolify_list_projects", annotations={"readOnlyHint": True})
 async def coolify_list_projects() -> str:
-    """List all Coolify projects with their environments."""
+    """List all Coolify projects."""
     try:
         async with _client() as c:
             r = await c.get("/projects")
@@ -232,20 +229,9 @@ async def coolify_list_projects() -> str:
     except Exception as e:
         return _err(e)
 
-@mcp.tool(name="coolify_list_servers", annotations={"readOnlyHint": True, "destructiveHint": False})
-async def coolify_list_servers() -> str:
-    """List all connected servers with their IPs and status."""
-    try:
-        async with _client() as c:
-            r = await c.get("/servers")
-            r.raise_for_status()
-            return _fmt(r.json())
-    except Exception as e:
-        return _err(e)
-
 if __name__ == "__main__":
-    print(f"Starting Coolify MCP Server")
-    print(f"COOLIFY_URL: {COOLIFY_URL or 'NOT SET - set COOLIFY_URL env var'}")
-    print(f"COOLIFY_TOKEN: {'SET' if COOLIFY_TOKEN else 'NOT SET - set COOLIFY_TOKEN env var'}")
-    # host/port configured via FASTMCP_HOST / FASTMCP_PORT env vars (default: 0.0.0.0:8000)
-    mcp.run(transport="sse")
+    print(f"Coolify MCP Server starting...")
+    print(f"COOLIFY_URL: {COOLIFY_URL or 'NOT SET'}")
+    print(f"COOLIFY_TOKEN: {'SET' if COOLIFY_TOKEN else 'NOT SET'}")
+    print(f"Transport: streamable-http on port {os.environ.get('FASTMCP_PORT', '8080')}")
+    mcp.run(transport="streamable-http")
